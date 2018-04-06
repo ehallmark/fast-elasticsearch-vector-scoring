@@ -24,6 +24,7 @@ import org.elasticsearch.script.ScriptException;
 
 import java.nio.ByteBuffer;
 import java.nio.DoubleBuffer;
+import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.Map;
 
@@ -39,6 +40,7 @@ public final class VectorScoreScript implements LeafSearchScript, ExecutableScri
     public final String field;
 
     private static final int DOUBLE_SIZE = 8;
+    private static final int FLOAT_SIZE = 4;
 
     private int docId;
     private BinaryDocValues binaryEmbeddingReader;
@@ -47,6 +49,8 @@ public final class VectorScoreScript implements LeafSearchScript, ExecutableScri
     private final double magnitude;
 
     private final boolean cosine;
+    private final double scale;
+    private final boolean useFloat;
 
     @Override
     public void setScorer(Scorer scorer) {
@@ -121,6 +125,12 @@ public final class VectorScoreScript implements LeafSearchScript, ExecutableScri
                 (boolean)cosineBool :
                 true;
 
+        final Object useFloatObj = params.get("float");
+        useFloat = (useFloatObj==null) ? false : (Boolean)useFloatObj;
+
+        final Object scaleObj = params.get("scale");
+        scale = scaleObj==null ? 1d : (Double)scaleObj;
+
         final Object field = params.get("field");
         if (field == null)
             throw new IllegalArgumentException("binary_vector_score script requires field input");
@@ -162,24 +172,44 @@ public final class VectorScoreScript implements LeafSearchScript, ExecutableScri
         final ByteArrayDataInput input = new ByteArrayDataInput(bytes);
         input.readVInt(); // returns the number of values which should be 1, MUST appear hear since it affect the next calls
         final int len = input.readVInt(); // returns the number of bytes to read
-        if(len != size * DOUBLE_SIZE) {
+        final int targetLen = (useFloat ? FLOAT_SIZE : DOUBLE_SIZE) * size;
+        if(len != targetLen) {
             return 0.0;
         }
         final int position = input.getPosition();
-        final DoubleBuffer doubleBuffer = ByteBuffer.wrap(bytes, position, len).asDoubleBuffer();
-
-        final double[] docVector = new double[size];
-        doubleBuffer.get(docVector);
 
         double docVectorNorm = 0.0f;
-        double score = 0;
-        for (int i = 0; i < size; i++) {
-            // doc inputVector norm
-            if(cosine) {
-                docVectorNorm += docVector[i]*docVector[i];
+        double score = 0d;
+        if(useFloat) {
+            final FloatBuffer floatBuffer = ByteBuffer.wrap(bytes, position, len).asFloatBuffer();
+            final float[] docVector = new float[size];
+            floatBuffer.get(docVector);
+            for (int i = 0; i < size; i++) {
+                // doc inputVector norm
+                if(cosine) {
+                    docVectorNorm += docVector[i]*docVector[i];
+                }
+                // dot product
+                score += docVector[i] * inputVector[i];
             }
-            // dot product
-            score += docVector[i] * inputVector[i];
+
+        } else {
+            final DoubleBuffer doubleBuffer = ByteBuffer.wrap(bytes, position, len).asDoubleBuffer();
+
+            final double[] docVector = new double[size];
+            doubleBuffer.get(docVector);
+            for (int i = 0; i < size; i++) {
+                // doc inputVector norm
+                if(cosine) {
+                    docVectorNorm += docVector[i]*docVector[i];
+                }
+                // dot product
+                score += docVector[i] * inputVector[i];
+            }
+        }
+
+        if(scale!=1d) {
+            score*=scale;
         }
         if(cosine) {
             // cosine similarity score
