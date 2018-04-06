@@ -51,6 +51,7 @@ public final class VectorScoreScript implements LeafSearchScript, ExecutableScri
     private final boolean cosine;
     private final double scale;
     private final boolean useFloat;
+    private final Double greaterThan;
 
     @Override
     public void setScorer(Scorer scorer) {
@@ -125,6 +126,8 @@ public final class VectorScoreScript implements LeafSearchScript, ExecutableScri
                 (boolean)cosineBool :
                 true;
 
+        greaterThan = (Double)params.get("greaterThan");
+
         final Object useFloatObj = params.get("float");
         useFloat = (useFloatObj==null) ? false : (Boolean)useFloatObj;
 
@@ -195,7 +198,6 @@ public final class VectorScoreScript implements LeafSearchScript, ExecutableScri
 
         } else {
             final DoubleBuffer doubleBuffer = ByteBuffer.wrap(bytes, position, len).asDoubleBuffer();
-
             final double[] docVector = new double[size];
             doubleBuffer.get(docVector);
             for (int i = 0; i < size; i++) {
@@ -214,13 +216,16 @@ public final class VectorScoreScript implements LeafSearchScript, ExecutableScri
         if(cosine) {
             // cosine similarity score
             if (docVectorNorm == 0 || magnitude == 0){
-                return 0f;
+                score = 0f;
             } else {
-                return score / (Math.sqrt(docVectorNorm) * magnitude);
+                score /= (Math.sqrt(docVectorNorm) * magnitude);
             }
-        } else {
-            return score;
         }
+
+        if(greaterThan!=null) {
+            return score >= greaterThan;
+        }
+        return score;
     }
 
 }
